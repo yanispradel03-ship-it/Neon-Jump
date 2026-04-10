@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>NEON JUMP V11.5 WEB</title>
+
+<style>
+body {
+margin: 0;
+overflow: hidden;
+background: black;
+font-family: monospace;
+touch-action: none;
+}
+
+canvas { display: block; }
+
+/* LOADING SCREEN */
+#loadingScreen {
+position: absolute;
+inset: 0;
+background: radial-gradient(circle, #0a0f2c, #000);
+color: white;
+display: flex;
+flex-direction: column;
+justify-content: center;
+align-items: center;
+z-index: 100;
+}
+
+#loadingBar {
+width: 200px;
+height: 6px;
+background: #222;
+margin-top: 10px;
+overflow: hidden;
+border-radius: 4px;
+}
+
+#loadingFill {
+width: 0%;
+height: 100%;
+background: #6c7bff;
+transition: width 0.2s;
+}
+
+/* MENU */
+#menu {
+position: absolute;
+inset: 0;
+display: none;
+flex-direction: column;
+justify-content: center;
+align-items: center;
+background: radial-gradient(circle, #0a0f2c, #000);
+color: white;
+z-index: 10;
+}
+
+/* HUD */
+#hud {
+position: absolute;
+top: 10px;
+left: 10px;
+color: white;
+font-size: 12px;
+z-index: 5;
+white-space: pre;
+}
+
+/* SHOP */
+#shop {
+position: absolute;
+right: 10px;
+top: 10px;
+width: 180px;
+max-height: 90vh;
+overflow-y: auto;
+background: rgba(0,0,0,0.6);
+color: white;
+padding: 10px;
+border-radius: 10px;
+z-index: 9;
+display: none;
+}
+
+/* MOBILE */
+#controls {
+position: absolute;
+bottom: 20px;
+width: 100%;
+display: flex;
+justify-content: space-between;
+padding: 0 20px;
+z-index: 8;
+}
+
+.ctrl {
+width: 80px;
+height: 80px;
+border-radius: 50%;
+background: rgba(108,123,255,0.5);
+display: flex;
+align-items: center;
+justify-content: center;
+color: white;
+font-size: 22px;
+}
+</style>
+
+<!-- CDN (fallback safe handled in boot) -->
+<script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
+
+</head>
+
+<body>
+
+<div id="loadingScreen">
+<h2>NEON JUMP</h2>
+<div id="loadingText">BOOTING...</div>
+<div id="loadingBar"><div id="loadingFill"></div></div>
+</div>
+
+<div id="menu">
+<h1>NEON JUMP V11.5</h1>
+<button onclick="startGame()">PLAY</button>
+<button onclick="toggleShop()">SHOP</button>
+</div>
+
+<div id="hud"></div>
+<div id="shop"></div>
+
+<div id="controls">
+<div class="ctrl" id="leftBtn">◀</div>
+<div class="ctrl" id="rightBtn">▶</div>
+</div>
+
+<script>
+
+let scene, camera, renderer;
+let player;
+let obstacles = [];
+
+let running = false;
+let frame = 0;
+let score = 0;
+
+const lanes = [-2, 0, 2];
+let levelSpeed = 0.08;
+
+// ================= BOOT SYSTEM =================
+function setLoading(t, p) {
+document.getElementById("loadingText").innerText = t;
+document.getElementById("loadingFill").style.width = p + "%";
+}
+
+function checkWebGL() {
+try {
+const canvas = document.createElement("canvas");
+return !!(window.WebGLRenderingContext &&
+(canvas.getContext("webgl") || canvas.getContext("experimental-webgl")));
+} catch (e) {
+return false;
+}
+}
+
+// ================= SAFE INIT =================
+function init() {
+
+setLoading("INIT SCENE", 40);
+
+scene = new THREE.Scene();
+
+camera = new THREE.PerspectiveCamera(
+70,
+window.innerWidth / window.innerHeight,
+0.1,
+1000
+);
+
+renderer = new THREE.WebGLRenderer({ antialias: true });
+
+if (!renderer) throw new Error("WebGL renderer failed");
+
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+setLoading("LIGHTS", 60);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+const light = new THREE.DirectionalLight(0xffffff, 1);
+scene.add(light);
+
+setLoading("PLAYER", 80);
+
+player = new THREE.Mesh(
+new THREE.BoxGeometry(1,1,1),
+new THREE.MeshStandardMaterial({ color: 0x4c7dff })
+);
+player.position.set(0,0.5,0);
+scene.add(player);
+
+setLoading("WORLD", 95);
+
+const floor = new THREE.Mesh(
+new THREE.PlaneGeometry(200,200),
+new THREE.MeshStandardMaterial({ color: 0x111122 })
+);
+floor.rotation.x = -Math.PI/2;
+scene.add(floor);
+
+generateSegment(0);
+
+setLoading("READY", 100);
+
+setTimeout(() => {
+document.getElementById("loadingScreen").style.display = "none";
+document.getElementById("menu").style.display = "flex";
+}, 400);
+}
+
+// ================= PROCEDURAL SAFE =================
+function generateSegment(z) {
+
+const safeLane = Math.floor(Math.random()*3);
+
+for (let i=0;i<3;i++) {
+if (i === safeLane) continue;
+
+const o = new THREE.Mesh(
+new THREE.BoxGeometry(1,1,1),
+new THREE.MeshStandardMaterial({ color: 0xff4444 })
+);
+
+o.position.set(lanes[i],0.5,-z-20-Math.random()*10);
+scene.add(o);
+obstacles.push(o);
+}
+}
+
+// ================= INPUT =================
+window.addEventListener("keydown",(e)=>{
+if(!running) return;
+if(e.code==="ArrowLeft") move(-1);
+if(e.code==="ArrowRight") move(1);
+});
+
+function move(dir){
+let i = lanes.indexOf(player.position.x);
+i = Math.max(0,Math.min(2,i+dir));
+player.position.x = lanes[i];
+}
+
+// MOBILE
+function bind(id,dir){
+document.getElementById(id).addEventListener("touchstart",(e)=>{
+e.preventDefault();
+if(!running) return;
+move(dir);
+});
+}
+bind("leftBtn",-1);
+bind("rightBtn",1);
+
+// ================= LOOP =================
+function loop(){
+
+if(!running) return;
+
+frame++;
+score += 0.1;
+
+levelSpeed += 0.00001;
+
+// OBSTACLES
+for(let o of obstacles){
+o.position.z += levelSpeed;
+
+if(Math.abs(o.position.x-player.position.x)<1 &&
+Math.abs(o.position.z)<1){
+gameOver();
+}
+}
+
+obstacles = obstacles.filter(o=>o.position.z<20);
+
+if(frame%60===0) generateSegment(frame);
+
+// CAMERA
+camera.position.x += (player.position.x-camera.position.x)*0.12;
+camera.position.y=4;
+camera.position.z=8;
+camera.lookAt(player.position);
+
+renderer.render(scene,camera);
+
+document.getElementById("hud").innerText =
+`NEON JUMP V11.5 WEB
+SCORE: ${Math.floor(score)}
+SPEED: ${levelSpeed.toFixed(3)}`;
+
+requestAnimationFrame(loop);
+}
+
+// ================= START =================
+function startGame(){
+
+if(!checkWebGL()){
+alert("WebGL not supported on this device/browser");
+return;
+}
+
+document.getElementById("menu").style.display="none";
+
+try{
+init();
+running=true;
+loop();
+}catch(e){
+alert("INIT ERROR: "+e.message);
+}
+}
+
+// ================= GAME OVER =================
+function gameOver(){
+running=false;
+}
+
+// ================= SHOP PLACEHOLDER (SAFE) =================
+function toggleShop(){
+alert("SHOP SYSTEM READY FOR NEXT UPDATE (V11.6 SAFE MODULE)");
+}
+
+// ================= RESIZE SAFE =================
+window.addEventListener("resize",()=>{
+if(!camera||!renderer) return;
+camera.aspect=window.innerWidth/window.innerHeight;
+camera.updateProjectionMatrix();
+renderer.setSize(window.innerWidth,window.innerHeight);
+});
+
+</script>
+
+</body>
+</html>
